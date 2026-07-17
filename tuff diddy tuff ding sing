@@ -1,0 +1,576 @@
+--[[
+    MobileUI.lua
+    Delta Executor compatible mobile toggle UI
+    Drop into your game's LocalScript or require from main script
+--]]
+
+local MobileUI = {}
+
+-- Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Delta executor safe environment check
+local IS_DELTA = (syn and syn.request) or (http and http.request) or (request) or false
+local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+-- Config
+local CONFIG = {
+    Theme = {
+        Background   = Color3.fromRGB(15, 15, 20),
+        Card         = Color3.fromRGB(22, 22, 30),
+        Accent       = Color3.fromRGB(100, 60, 255),
+        AccentHover  = Color3.fromRGB(130, 90, 255),
+        Text         = Color3.fromRGB(240, 240, 255),
+        SubText      = Color3.fromRGB(140, 140, 170),
+        ToggleOn     = Color3.fromRGB(80, 220, 140),
+        ToggleOff    = Color3.fromRGB(60, 60, 80),
+        Border       = Color3.fromRGB(40, 40, 60),
+        Danger       = Color3.fromRGB(220, 60, 80),
+    },
+    Font         = Enum.Font.GothamBold,
+    FontBody     = Enum.Font.Gotham,
+    ToggleSize   = UDim2.new(0, 44, 0, 24),
+    CornerRadius = UDim.new(0, 10),
+    AnimSpeed    = 0.18,
+    DragEnabled  = true,
+    OpenKey      = Enum.KeyCode.RightShift, -- desktop fallback
+}
+
+-- State
+local State = {
+    Open       = false,
+    Dragging   = false,
+    DragOffset = Vector2.new(),
+    Toggles    = {},
+    Sections   = {},
+}
+
+-- Utility: safe pcall wrapper
+local function safe(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        warn("[MobileUI] " .. tostring(err))
+    end
+end
+
+-- Utility: tween instance
+local function tween(obj, props, t, style, dir)
+    local info = TweenInfo.new(
+        t or CONFIG.AnimSpeed,
+        style or Enum.EasingStyle.Quad,
+        dir or Enum.EasingDirection.Out
+    )
+    local tw = TweenService:Create(obj, info, props)
+    tw:Play()
+    return tw
+end
+
+-- Utility: create rounded corner
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = radius or CONFIG.CornerRadius
+    c.Parent = parent
+    return c
+end
+
+-- Utility: create stroke
+local function stroke(parent, color, thickness)
+    local s = Instance.new("UIStroke")
+    s.Color = color or CONFIG.Theme.Border
+    s.Thickness = thickness or 1
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = parent
+    return s
+end
+
+-- Utility: create padding
+local function padding(parent, all, top, bottom, left, right)
+    local p = Instance.new("UIPadding")
+    if all then
+        p.PaddingTop    = UDim.new(0, all)
+        p.PaddingBottom = UDim.new(0, all)
+        p.PaddingLeft   = UDim.new(0, all)
+        p.PaddingRight  = UDim.new(0, all)
+    else
+        p.PaddingTop    = UDim.new(0, top    or 0)
+        p.PaddingBottom = UDim.new(0, bottom or 0)
+        p.PaddingLeft   = UDim.new(0, left   or 0)
+        p.PaddingRight  = UDim.new(0, right  or 0)
+    end
+    p.Parent = parent
+    return p
+end
+
+-- Build root ScreenGui (Delta safe)
+local function buildGui()
+    local existing = PlayerGui:FindFirstChild("_MobileUI")
+    if existing then existing:Destroy() end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name             = "_MobileUI"
+    sg.ResetOnSpawn     = false
+    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
+    sg.IgnoreGuiInset   = true
+    sg.DisplayOrder     = 999
+
+    -- Delta executor doesn't always support gethui(); use PlayerGui safely
+    safe(function()
+        if gethui then
+            sg.Parent = gethui()
+        else
+            sg.Parent = PlayerGui
+        end
+    end)
+    if not sg.Parent then
+        sg.Parent = PlayerGui
+    end
+
+    return sg
+end
+
+-- Build floating toggle button (mobile open/close)
+local function buildOpenButton(sg, mainFrame)
+    local btn = Instance.new("TextButton")
+    btn.Name            = "OpenButton"
+    btn.Size            = UDim2.new(0, 48, 0, 48)
+    btn.Position        = UDim2.new(0, 16, 0.5, -24)
+    btn.BackgroundColor3 = CONFIG.Theme.Accent
+    btn.Text            = "☰"
+    btn.TextColor3      = CONFIG.Theme.Text
+    btn.Font            = CONFIG.Font
+    btn.TextSize        = 22
+    btn.ZIndex          = 10
+    btn.Parent          = sg
+    corner(btn, UDim.new(0, 14))
+    stroke(btn, CONFIG.Theme.AccentHover, 1.5)
+
+    -- Drag logic for open button
+    local dragStart, startPos
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragStart  = input.Position
+            startPos   = btn.Position
+            State.Dragging = false
+        end
+    end)
+    btn.InputChanged:Connect(function(input)
+        if dragStart and (
+            input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseMovement
+        ) then
+            local delta = input.Position - dragStart
+            if delta.Magnitude > 6 then
+                State.Dragging = true
+                local vp = sg.AbsoluteSize
+                local nx = math.clamp(startPos.X.Offset + delta.X, 0, vp.X - 56)
+                local ny = math.clamp(startPos.Y.Offset + delta.Y, 0, vp.Y - 56)
+                btn.Position = UDim2.new(0, nx, 0, ny)
+            end
+        end
+    end)
+    btn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if not State.Dragging then
+                -- Toggle main frame
+                State.Open = not State.Open
+                if State.Open then
+                    mainFrame.Visible = true
+                    tween(mainFrame, { BackgroundTransparency = 0 }, 0.2)
+                    tween(mainFrame, { Size = UDim2.new(0, 280, 0, mainFrame.AbsoluteSize.Y) }, 0.2, Enum.EasingStyle.Back)
+                else
+                    tween(mainFrame, { BackgroundTransparency = 1 }, 0.15)
+                    local tw = tween(mainFrame, { Size = UDim2.new(0, 0, 0, mainFrame.AbsoluteSize.Y) }, 0.18)
+                    tw.Completed:Connect(function()
+                        mainFrame.Visible = false
+                        mainFrame.Size    = UDim2.new(0, 280, 0, 0)
+                    end)
+                end
+                -- Pulse button
+                tween(btn, { BackgroundColor3 = CONFIG.Theme.AccentHover }, 0.08)
+                task.delay(0.12, function()
+                    tween(btn, { BackgroundColor3 = CONFIG.Theme.Accent }, 0.12)
+                end)
+            end
+            dragStart      = nil
+            State.Dragging = false
+        end
+    end)
+
+    return btn
+end
+
+-- Build main panel
+local function buildMainFrame(sg)
+    local vp = sg.AbsoluteSize
+
+    local frame = Instance.new("Frame")
+    frame.Name                 = "MainFrame"
+    frame.Size                 = UDim2.new(0, 280, 0, 0)
+    frame.Position             = UDim2.new(0, 72, 0.08, 0)
+    frame.BackgroundColor3     = CONFIG.Theme.Background
+    frame.BackgroundTransparency = 1
+    frame.ClipsDescendants     = true
+    frame.Visible              = false
+    frame.ZIndex               = 9
+    frame.Parent               = sg
+    corner(frame, UDim.new(0, 14))
+    stroke(frame, CONFIG.Theme.Border, 1)
+
+    -- Header
+    local header = Instance.new("Frame")
+    header.Name              = "Header"
+    header.Size              = UDim2.new(1, 0, 0, 44)
+    header.BackgroundColor3  = CONFIG.Theme.Card
+    header.ZIndex            = 10
+    header.Parent            = frame
+    corner(header, UDim.new(0, 14))
+    padding(header, nil, 0, 0, 14, 14)
+
+    local title = Instance.new("TextLabel")
+    title.Size               = UDim2.new(1, -40, 1, 0)
+    title.BackgroundTransparency = 1
+    title.Text               = "Menu"
+    title.TextColor3         = CONFIG.Theme.Text
+    title.Font               = CONFIG.Font
+    title.TextSize           = 16
+    title.TextXAlignment     = Enum.TextXAlignment.Left
+    title.ZIndex             = 11
+    title.Parent             = header
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size            = UDim2.new(0, 28, 0, 28)
+    closeBtn.Position        = UDim2.new(1, -36, 0.5, -14)
+    closeBtn.BackgroundColor3 = CONFIG.Theme.Danger
+    closeBtn.Text            = "✕"
+    closeBtn.TextColor3      = Color3.fromRGB(255,255,255)
+    closeBtn.Font            = CONFIG.Font
+    closeBtn.TextSize        = 13
+    closeBtn.ZIndex          = 12
+    closeBtn.Parent          = header
+    corner(closeBtn, UDim.new(0, 8))
+
+    -- Scroll container
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name                    = "Scroll"
+    scroll.Size                    = UDim2.new(1, 0, 1, -44)
+    scroll.Position                = UDim2.new(0, 0, 0, 44)
+    scroll.BackgroundTransparency  = 1
+    scroll.BorderSizePixel         = 0
+    scroll.ScrollBarThickness      = 3
+    scroll.ScrollBarImageColor3    = CONFIG.Theme.Accent
+    scroll.CanvasSize              = UDim2.new(0, 0, 0, 0)
+    scroll.AutomaticCanvasSize     = Enum.AutomaticSize.Y
+    scroll.ZIndex                  = 10
+    scroll.Parent                  = frame
+    padding(scroll, 10)
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder    = Enum.SortOrder.LayoutOrder
+    layout.Padding      = UDim.new(0, 8)
+    layout.Parent       = scroll
+
+    -- Close button wiring
+    closeBtn.MouseButton1Click:Connect(function()
+        State.Open = false
+        tween(frame, { BackgroundTransparency = 1 }, 0.15)
+        local tw = tween(frame, { Size = UDim2.new(0, 280, 0, frame.AbsoluteSize.Y) }, 0.18)
+        task.delay(0.18, function()
+            frame.Visible = false
+            frame.Size    = UDim2.new(0, 280, 0, 0)
+        end)
+    end)
+
+    return frame, scroll, title
+end
+
+-- Build a section label
+local function buildSection(scroll, name)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                 = UDim2.new(1, 0, 0, 22)
+    lbl.BackgroundTransparency = 1
+    lbl.Text                 = name:upper()
+    lbl.TextColor3           = CONFIG.Theme.SubText
+    lbl.Font                 = CONFIG.Font
+    lbl.TextSize             = 11
+    lbl.TextXAlignment       = Enum.TextXAlignment.Left
+    lbl.LayoutOrder          = #scroll:GetChildren()
+    lbl.ZIndex               = 11
+    lbl.Parent               = scroll
+
+    local line = Instance.new("Frame")
+    line.Size            = UDim2.new(1, 0, 0, 1)
+    line.BackgroundColor3 = CONFIG.Theme.Border
+    line.BorderSizePixel = 0
+    line.ZIndex          = 11
+    line.LayoutOrder     = lbl.LayoutOrder + 0.5
+    line.Parent          = scroll
+
+    return lbl
+end
+
+-- Build a toggle row
+local function buildToggleRow(scroll, label, default, callback)
+    local row = Instance.new("Frame")
+    row.Name             = "Toggle_" .. label
+    row.Size             = UDim2.new(1, 0, 0, 42)
+    row.BackgroundColor3 = CONFIG.Theme.Card
+    row.LayoutOrder      = #scroll:GetChildren() + 1
+    row.ZIndex           = 11
+    row.Parent           = scroll
+    corner(row, UDim.new(0, 8))
+    stroke(row, CONFIG.Theme.Border, 0.8)
+    padding(row, nil, 0, 0, 12, 12)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                 = UDim2.new(1, -60, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text                 = label
+    lbl.TextColor3           = CONFIG.Theme.Text
+    lbl.Font                 = CONFIG.FontBody
+    lbl.TextSize             = 14
+    lbl.TextXAlignment       = Enum.TextXAlignment.Left
+    lbl.ZIndex               = 12
+    lbl.Parent               = row
+
+    -- Toggle pill
+    local pill = Instance.new("Frame")
+    pill.Name            = "Pill"
+    pill.Size            = CONFIG.ToggleSize
+    pill.Position        = UDim2.new(1, -50, 0.5, -12)
+    pill.BackgroundColor3 = default and CONFIG.Theme.ToggleOn or CONFIG.Theme.ToggleOff
+    pill.ZIndex          = 12
+    pill.Parent          = row
+    corner(pill, UDim.new(0, 12))
+
+    local knob = Instance.new("Frame")
+    knob.Name            = "Knob"
+    knob.Size            = UDim2.new(0, 18, 0, 18)
+    knob.Position        = default and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.ZIndex          = 13
+    knob.Parent          = pill
+    corner(knob, UDim.new(0, 9))
+
+    -- State
+    local value = default or false
+
+    local function setToggle(v, silent)
+        value = v
+        local knobTarget = v and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        local pillColor  = v and CONFIG.Theme.ToggleOn or CONFIG.Theme.ToggleOff
+        tween(knob, { Position = knobTarget }, CONFIG.AnimSpeed)
+        tween(pill, { BackgroundColor3 = pillColor }, CONFIG.AnimSpeed)
+        if not silent and callback then
+            safe(callback, value)
+        end
+    end
+
+    -- Touch / click on entire row
+    local btn = Instance.new("TextButton")
+    btn.Size                 = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text                 = ""
+    btn.ZIndex               = 14
+    btn.Parent               = row
+
+    btn.MouseButton1Click:Connect(function()
+        setToggle(not value)
+    end)
+
+    local toggleObj = {
+        SetValue = setToggle,
+        GetValue = function() return value end,
+        Row      = row,
+    }
+    State.Toggles[label] = toggleObj
+    return toggleObj
+end
+
+-- Build a button row
+local function buildButtonRow(scroll, label, callback)
+    local btn = Instance.new("TextButton")
+    btn.Name             = "Btn_" .. label
+    btn.Size             = UDim2.new(1, 0, 0, 38)
+    btn.BackgroundColor3 = CONFIG.Theme.Accent
+    btn.Text             = label
+    btn.TextColor3       = CONFIG.Theme.Text
+    btn.Font             = CONFIG.Font
+    btn.TextSize         = 14
+    btn.LayoutOrder      = #scroll:GetChildren() + 1
+    btn.ZIndex           = 11
+    btn.Parent           = scroll
+    corner(btn, UDim.new(0, 8))
+
+    btn.MouseButton1Click:Connect(function()
+        tween(btn, { BackgroundColor3 = CONFIG.Theme.AccentHover }, 0.08)
+        task.delay(0.15, function()
+            tween(btn, { BackgroundColor3 = CONFIG.Theme.Accent }, 0.12)
+        end)
+        safe(callback)
+    end)
+
+    return btn
+end
+
+-- Build a label row
+local function buildLabelRow(scroll, text)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                 = UDim2.new(1, 0, 0, 32)
+    lbl.BackgroundColor3     = CONFIG.Theme.Card
+    lbl.BackgroundTransparency = 0
+    lbl.Text                 = text
+    lbl.TextColor3           = CONFIG.Theme.SubText
+    lbl.Font                 = CONFIG.FontBody
+    lbl.TextSize             = 13
+    lbl.TextXAlignment       = Enum.TextXAlignment.Left
+    lbl.LayoutOrder          = #scroll:GetChildren() + 1
+    lbl.ZIndex               = 11
+    lbl.Parent               = scroll
+    corner(lbl, UDim.new(0, 6))
+    padding(lbl, nil, 0, 0, 10, 10)
+    return lbl
+end
+
+-- Desktop keyboard fallback
+local function hookDesktopKey(sg, mainFrame)
+    if IS_MOBILE then return end
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == CONFIG.OpenKey then
+            State.Open = not State.Open
+            if State.Open then
+                mainFrame.Visible = true
+                tween(mainFrame, { BackgroundTransparency = 0 }, 0.2)
+                tween(mainFrame, { Size = UDim2.new(0, 280, 0, math.min(500, mainFrame.AbsoluteCanvasSize.Y + 54)) }, 0.2, Enum.EasingStyle.Back)
+            else
+                tween(mainFrame, { BackgroundTransparency = 1 }, 0.15)
+                task.delay(0.18, function()
+                    mainFrame.Visible = false
+                end)
+            end
+        end
+    end)
+end
+
+-- Auto resize frame height when scroll content changes
+local function hookAutoResize(mainFrame, scroll)
+    local function resize()
+        local contentH = scroll.AbsoluteCanvasSize.Y + 20
+        local maxH     = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y * 0.75) or 500
+        local target   = math.clamp(contentH + 44, 60, maxH)
+        if State.Open then
+            tween(mainFrame, { Size = UDim2.new(0, 280, 0, target) }, 0.12)
+        end
+    end
+    scroll:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(resize)
+end
+
+--[[
+    PUBLIC API
+    
+    local ui = MobileUI.new({
+        Title    = "My Game",
+        OpenKey  = Enum.KeyCode.RightShift,
+    })
+
+    ui:AddSection("Combat")
+    ui:AddToggle("God Mode",    false, function(v) ... end)
+    ui:AddToggle("Speed Boost", false, function(v) ... end)
+    ui:AddSection("Misc")
+    ui:AddButton("Reset Character", function() ... end)
+    ui:AddLabel("v1.0.0")
+--]]
+
+function MobileUI.new(opts)
+    opts = opts or {}
+    CONFIG.OpenKey = opts.OpenKey or CONFIG.OpenKey
+
+    local sg        = buildGui()
+    local frame, scroll, titleLbl = buildMainFrame(sg)
+    local openBtn   = buildOpenButton(sg, frame)
+
+    if opts.Title then
+        titleLbl.Text = opts.Title
+    end
+
+    hookDesktopKey(sg, frame)
+    hookAutoResize(frame, scroll)
+
+    local api = {}
+
+    function api:SetTitle(t)
+        titleLbl.Text = t
+    end
+
+    function api:AddSection(name)
+        buildSection(scroll, name)
+    end
+
+    function api:AddToggle(label, default, callback)
+        return buildToggleRow(scroll, label, default, callback)
+    end
+
+    function api:AddButton(label, callback)
+        return buildButtonRow(scroll, label, callback)
+    end
+
+    function api:AddLabel(text)
+        return buildLabelRow(scroll, text)
+    end
+
+    function api:GetToggle(label)
+        return State.Toggles[label]
+    end
+
+    function api:SetOpen(v)
+        State.Open = v
+        frame.Visible = v
+        if v then
+            tween(frame, { BackgroundTransparency = 0 }, 0.2)
+        else
+            tween(frame, { BackgroundTransparency = 1 }, 0.15)
+        end
+    end
+
+    function api:Destroy()
+        sg:Destroy()
+    end
+
+    return api
+end
+
+return MobileUI
+
+--[[
+========== USAGE EXAMPLE ==========
+
+local MobileUI = loadstring(game:HttpGet("YOUR_RAW_URL_HERE"))()
+
+local ui = MobileUI.new({
+    Title   = "My Game",
+    OpenKey = Enum.KeyCode.RightShift,
+})
+
+ui:AddSection("Player")
+ui:AddToggle("God Mode", false, function(enabled)
+    -- your logic here
+end)
+ui:AddToggle("Infinite Jump", false, function(enabled)
+    -- your logic here
+end)
+
+ui:AddSection("World")
+ui:AddButton("Reset", function()
+    game:GetService("Players").LocalPlayer.Character:FindFirstChild("Humanoid").Health = 0
+end)
+
+ui:AddLabel("Delta Compatible v1.0")
+]]
