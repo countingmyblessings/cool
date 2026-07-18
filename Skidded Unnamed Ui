@@ -1,0 +1,468 @@
+-- Services
+local Players = game:GetService('Players')
+local RunService = game:GetService('RunService')
+local UserInputService = game:GetService('UserInputService')
+local TweenService = game:GetService('TweenService')
+local VirtualInputManager = game:GetService('VirtualInputManager')
+
+-- Local Player & Character
+local localPlayer = Players.LocalPlayer
+local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild('HumanoidRootPart')
+local humanoid = character:WaitForChild('Humanoid')
+
+-- Anti-Aim Variables
+local antiAimActive = false
+local antiAimType = "Jitter" -- Jitter, Spin, Fake
+local antiAimAngle = 0
+local antiAimYaw = 0
+
+-- Orbit Variables
+local orbitActive = false
+local orbitSpeed = 0.18
+local orbitDistance = 8
+local orbitHeight = 4
+local orbitAngle = 0
+
+-- GUI Variables
+local menuVisible = true
+local menuTransparency = 0.5
+
+-- Connections
+local antiAimConnection, orbitConnection
+
+-- Function to find nearest enemy
+local function getClosestEnemy()
+    local closest, closestDistance = nil, math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local sameTeam = (localPlayer.Team ~= nil and player.Team ~= nil and localPlayer.Team == player.Team)
+            if not sameTeam then
+                local distance = (humanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
+                if distance < closestDistance then
+                    closestDistance = distance
+                    closest = player
+                end
+            end
+        end
+    end
+    
+    return closest
+end
+
+-- Create GUI
+local screenGui = Instance.new('ScreenGui', localPlayer.PlayerGui)
+screenGui.Name = 'RivalsUI'
+screenGui.ResetOnSpawn = false
+
+-- Main Frame
+local mainFrame = Instance.new('Frame', screenGui)
+mainFrame.Size = UDim2.new(0, 450, 0, 600)
+mainFrame.Position = UDim2.new(0.5, -225, 0.5, -300)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+mainFrame.BackgroundTransparency = 0.5
+mainFrame.Active = true
+mainFrame.Draggable = true
+Instance.new('UICorner', mainFrame).CornerRadius = UDim.new(0, 12)
+Instance.new('UIStroke', mainFrame).Color = Color3.fromRGB(80, 60, 200)
+Instance.new('UIStroke', mainFrame).Thickness = 2
+
+-- Title Bar
+local titleBar = Instance.new('Frame', mainFrame)
+titleBar.Size = UDim2.new(1, 0, 0, 45)
+titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+titleBar.BackgroundTransparency = 0.3
+Instance.new('UICorner', titleBar).CornerRadius = UDim.new(0, 12)
+
+local titleText = Instance.new('TextLabel', titleBar)
+titleText.Size = UDim2.new(0.7, 0, 1, 0)
+titleText.Position = UDim2.new(0.05, 0, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = 'Rivals'
+titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = 22
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+
+local subtitleText = Instance.new('TextLabel', titleBar)
+subtitleText.Size = UDim2.new(0.7, 0, 1, 0)
+subtitleText.Position = UDim2.new(0.05, 0, 0, 0)
+subtitleText.BackgroundTransparency = 1
+subtitleText.Text = 'Angel_sm'
+subtitleText.TextColor3 = Color3.fromRGB(150, 150, 200)
+subtitleText.Font = Enum.Font.GothamMedium
+subtitleText.TextSize = 14
+subtitleText.TextXAlignment = Enum.TextXAlignment.Right
+subtitleText.Position = UDim2.new(0.3, 0, 0, 0)
+
+-- Close Button
+local closeButton = Instance.new('TextButton', titleBar)
+closeButton.Size = UDim2.new(0, 30, 0, 30)
+closeButton.Position = UDim2.new(1, -40, 0, 7)
+closeButton.BackgroundColor3 = Color3.fromRGB(40, 30, 50)
+closeButton.Text = '✕'
+closeButton.TextColor3 = Color3.fromRGB(255, 100, 100)
+closeButton.Font = Enum.Font.GothamBold
+closeButton.TextSize = 18
+Instance.new('UICorner', closeButton).CornerRadius = UDim.new(1, 0)
+
+closeButton.MouseButton1Click:Connect(function()
+    menuVisible = false
+    mainFrame.Visible = false
+end)
+
+-- Left Sidebar
+local sidebar = Instance.new('Frame', mainFrame)
+sidebar.Size = UDim2.new(0, 120, 1, -45)
+sidebar.Position = UDim2.new(0, 0, 0, 45)
+sidebar.BackgroundColor3 = Color3.fromRGB(25, 25, 38)
+sidebar.BackgroundTransparency = 0.2
+
+-- Sidebar Buttons
+local tabs = {
+    {name = "main", text = "main"},
+    {name = "world", text = "world"},
+    {name = "esp", text = "esp"},
+    {name = "visuals", text = "visuals"},
+    {name = "character", text = "character"},
+    {name = "misc", text = "misc"},
+    {name = "settings", text = "settings"},
+}
+
+local sidebarButtons = {}
+local currentTab = "character"
+
+for i, tab in ipairs(tabs) do
+    local button = Instance.new('TextButton', sidebar)
+    button.Size = UDim2.new(1, 0, 0, 35)
+    button.Position = UDim2.new(0, 0, 0, (i-1) * 35 + 10)
+    button.BackgroundColor3 = (i == 4) and Color3.fromRGB(60, 40, 150) or Color3.fromRGB(30, 30, 45)
+    button.BackgroundTransparency = 0.3
+    button.Text = tab.text:upper()
+    button.TextColor3 = Color3.fromRGB(200, 200, 220)
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = 12
+    Instance.new('UICorner', button).CornerRadius = UDim.new(0, 6)
+    sidebarButtons[tab.name] = button
+end
+
+-- Main Content Area
+local contentArea = Instance.new('ScrollingFrame', mainFrame)
+contentArea.Size = UDim2.new(1, -130, 1, -55)
+contentArea.Position = UDim2.new(0, 125, 0, 50)
+contentArea.BackgroundTransparency = 1
+contentArea.CanvasSize = UDim2.new(0, 0, 0, 500)
+contentArea.ScrollBarThickness = 0
+contentArea.BorderSizePixel = 0
+
+-- CHARACTER TAB CONTENT
+local characterFrame = Instance.new('Frame', contentArea)
+characterFrame.Size = UDim2.new(1, 0, 0, 500)
+characterFrame.BackgroundTransparency = 1
+characterFrame.Visible = true
+
+-- Anti-Aim Section
+local antiAimSection = Instance.new('Frame', characterFrame)
+antiAimSection.Size = UDim2.new(1, -20, 0, 120)
+antiAimSection.Position = UDim2.new(0, 10, 0, 10)
+antiAimSection.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+antiAimSection.BackgroundTransparency = 0.3
+Instance.new('UICorner', antiAimSection).CornerRadius = UDim.new(0, 8)
+
+local antiAimLabel = Instance.new('TextLabel', antiAimSection)
+antiAimLabel.Size = UDim2.new(1, -20, 0, 25)
+antiAimLabel.Position = UDim2.new(0, 10, 0, 5)
+antiAimLabel.BackgroundTransparency = 1
+antiAimLabel.Text = 'Anti-Aim'
+antiAimLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
+antiAimLabel.Font = Enum.Font.GothamBold
+antiAimLabel.TextSize = 16
+antiAimLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local antiAimToggle = Instance.new('TextButton', antiAimSection)
+antiAimToggle.Size = UDim2.new(0, 80, 0, 30)
+antiAimToggle.Position = UDim2.new(0, 10, 0, 35)
+antiAimToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+antiAimToggle.Text = 'OFF'
+antiAimToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+antiAimToggle.Font = Enum.Font.GothamBold
+antiAimToggle.TextSize = 12
+Instance.new('UICorner', antiAimToggle).CornerRadius = UDim.new(0, 6)
+
+-- Anti-Aim Type Dropdown
+local antiAimTypeBtn = Instance.new('TextButton', antiAimSection)
+antiAimTypeBtn.Size = UDim2.new(0, 100, 0, 30)
+antiAimTypeBtn.Position = UDim2.new(0, 100, 0, 35)
+antiAimTypeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+antiAimTypeBtn.Text = 'Jitter'
+antiAimTypeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+antiAimTypeBtn.Font = Enum.Font.GothamBold
+antiAimTypeBtn.TextSize = 12
+Instance.new('UICorner', antiAimTypeBtn).CornerRadius = UDim.new(0, 6)
+
+local antiAimTypes = {"Jitter", "Spin", "Fake", "Jitter+Spin"}
+local currentAAIndex = 1
+
+antiAimTypeBtn.MouseButton1Click:Connect(function()
+    currentAAIndex = currentAAIndex % #antiAimTypes + 1
+    antiAimTypeBtn.Text = antiAimTypes[currentAAIndex]
+    antiAimType = antiAimTypes[currentAAIndex]
+end)
+
+-- Orbit Section
+local orbitSection = Instance.new('Frame', characterFrame)
+orbitSection.Size = UDim2.new(1, -20, 0, 100)
+orbitSection.Position = UDim2.new(0, 10, 0, 140)
+orbitSection.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+orbitSection.BackgroundTransparency = 0.3
+Instance.new('UICorner', orbitSection).CornerRadius = UDim.new(0, 8)
+
+local orbitLabel = Instance.new('TextLabel', orbitSection)
+orbitLabel.Size = UDim2.new(1, -20, 0, 25)
+orbitLabel.Position = UDim2.new(0, 10, 0, 5)
+orbitLabel.BackgroundTransparency = 1
+orbitLabel.Text = 'Orbit'
+orbitLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
+orbitLabel.Font = Enum.Font.GothamBold
+orbitLabel.TextSize = 16
+orbitLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local orbitToggle = Instance.new('TextButton', orbitSection)
+orbitToggle.Size = UDim2.new(0, 80, 0, 30)
+orbitToggle.Position = UDim2.new(0, 10, 0, 35)
+orbitToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+orbitToggle.Text = 'OFF'
+orbitToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+orbitToggle.Font = Enum.Font.GothamBold
+orbitToggle.TextSize = 12
+Instance.new('UICorner', orbitToggle).CornerRadius = UDim.new(0, 6)
+
+-- Orbit Speed Slider
+local speedLabel = Instance.new('TextLabel', orbitSection)
+speedLabel.Size = UDim2.new(0, 50, 0, 25)
+speedLabel.Position = UDim2.new(0, 10, 0, 70)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = 'Speed:'
+speedLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+speedLabel.Font = Enum.Font.GothamMedium
+speedLabel.TextSize = 12
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local speedSlider = Instance.new('Frame', orbitSection)
+speedSlider.Size = UDim2.new(0, 100, 0, 6)
+speedSlider.Position = UDim2.new(0, 70, 0, 80)
+speedSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+Instance.new('UICorner', speedSlider).CornerRadius = UDim.new(1, 0)
+
+local speedFill = Instance.new('Frame', speedSlider)
+speedFill.Size = UDim2.new(0.5, 0, 1, 0)
+speedFill.BackgroundColor3 = Color3.fromRGB(80, 60, 200)
+Instance.new('UICorner', speedFill).CornerRadius = UDim.new(1, 0)
+
+local speedValue = Instance.new('TextLabel', orbitSection)
+speedValue.Size = UDim2.new(0, 30, 0, 25)
+speedValue.Position = UDim2.new(0, 175, 0, 70)
+speedValue.BackgroundTransparency = 1
+speedValue.Text = '0.18'
+speedValue.TextColor3 = Color3.fromRGB(200, 200, 220)
+speedValue.Font = Enum.Font.GothamBold
+speedValue.TextSize = 12
+speedValue.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Distance Slider
+local distLabel = Instance.new('TextLabel', orbitSection)
+distLabel.Size = UDim2.new(0, 60, 0, 25)
+distLabel.Position = UDim2.new(0, 10, 0, 95)
+distLabel.BackgroundTransparency = 1
+distLabel.Text = 'Distance:'
+distLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+distLabel.Font = Enum.Font.GothamMedium
+distLabel.TextSize = 12
+distLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local distSlider = Instance.new('Frame', orbitSection)
+distSlider.Size = UDim2.new(0, 100, 0, 6)
+distSlider.Position = UDim2.new(0, 70, 0, 105)
+distSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+Instance.new('UICorner', distSlider).CornerRadius = UDim.new(1, 0)
+
+local distFill = Instance.new('Frame', distSlider)
+distFill.Size = UDim2.new(0.4, 0, 1, 0)
+distFill.BackgroundColor3 = Color3.fromRGB(80, 60, 200)
+Instance.new('UICorner', distFill).CornerRadius = UDim.new(1, 0)
+
+local distValue = Instance.new('TextLabel', orbitSection)
+distValue.Size = UDim2.new(0, 30, 0, 25)
+distValue.Position = UDim2.new(0, 175, 0, 95)
+distValue.BackgroundTransparency = 1
+distValue.Text = '8'
+distValue.TextColor3 = Color3.fromRGB(200, 200, 220)
+distValue.Font = Enum.Font.GothamBold
+distValue.TextSize = 12
+distValue.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Anti-Aim Toggle Function
+antiAimToggle.MouseButton1Click:Connect(function()
+    antiAimActive = not antiAimActive
+    antiAimToggle.Text = antiAimActive and 'ON' or 'OFF'
+    antiAimToggle.BackgroundColor3 = antiAimActive and Color3.fromRGB(80, 60, 200) or Color3.fromRGB(40, 40, 60)
+    
+    if antiAimActive then
+        antiAimConnection = RunService.Heartbeat:Connect(function()
+            if not antiAimActive or not humanoidRootPart then return end
+            
+            local target = getClosestEnemy()
+            if not target or not target.Character then return end
+            
+            local targetHRP = target.Character:FindFirstChild("HumanoidRootPart")
+            if not targetHRP then return end
+            
+            local lookVector = (targetHRP.Position - humanoidRootPart.Position).Unit
+            
+            if antiAimType == "Jitter" then
+                antiAimAngle = antiAimAngle + 0.1
+                local jitterAngle = math.sin(antiAimAngle) * 0.3
+                humanoidRootPart.CFrame = CFrame.lookAt(
+                    humanoidRootPart.Position,
+                    targetHRP.Position + Vector3.new(jitterAngle, 0, jitterAngle)
+                )
+            elseif antiAimType == "Spin" then
+                antiAimYaw = antiAimYaw + 0.15
+                local spinOffset = Vector3.new(math.cos(antiAimYaw) * 2, 0, math.sin(antiAimYaw) * 2)
+                humanoidRootPart.CFrame = CFrame.lookAt(
+                    humanoidRootPart.Position,
+                    targetHRP.Position + spinOffset
+                )
+            elseif antiAimType == "Fake" then
+                humanoidRootPart.CFrame = CFrame.lookAt(
+                    humanoidRootPart.Position,
+                    targetHRP.Position + Vector3.new(0, 0, 0)
+                )
+                -- Fake desync
+                if humanoid then
+                    humanoid.AutoRotate = false
+                end
+            elseif antiAimType == "Jitter+Spin" then
+                antiAimAngle = antiAimAngle + 0.1
+                antiAimYaw = antiAimYaw + 0.1
+                local jitterAngle = math.sin(antiAimAngle) * 0.3
+                local spinOffset = Vector3.new(math.cos(antiAimYaw) * 1.5, 0, math.sin(antiAimYaw) * 1.5)
+                humanoidRootPart.CFrame = CFrame.lookAt(
+                    humanoidRootPart.Position,
+                    targetHRP.Position + spinOffset + Vector3.new(jitterAngle, 0, jitterAngle)
+                )
+            end
+        end)
+    else
+        if antiAimConnection then
+            antiAimConnection:Disconnect()
+            antiAimConnection = nil
+        end
+        if humanoid then
+            humanoid.AutoRotate = true
+        end
+    end
+end)
+
+-- Orbit Toggle Function
+orbitToggle.MouseButton1Click:Connect(function()
+    orbitActive = not orbitActive
+    orbitToggle.Text = orbitActive and 'ON' or 'OFF'
+    orbitToggle.BackgroundColor3 = orbitActive and Color3.fromRGB(80, 60, 200) or Color3.fromRGB(40, 40, 60)
+    
+    if orbitActive then
+        orbitConnection = RunService.Heartbeat:Connect(function()
+            if not orbitActive or not humanoidRootPart then return end
+            
+            local target = getClosestEnemy()
+            if target and target.Character then
+                local targetHRP = target.Character:FindFirstChild("HumanoidRootPart")
+                if targetHRP then
+                    orbitAngle = orbitAngle + orbitSpeed
+                    humanoidRootPart.CFrame = CFrame.new(
+                        targetHRP.Position + Vector3.new(
+                            math.cos(orbitAngle) * orbitDistance,
+                            orbitHeight,
+                            math.sin(orbitAngle) * orbitDistance
+                        ),
+                        targetHRP.Position
+                    )
+                end
+            end
+        end)
+    else
+        if orbitConnection then
+            orbitConnection:Disconnect()
+            orbitConnection = nil
+        end
+    end
+end)
+
+-- Slider Controls (simplified - click to adjust)
+local function setupSlider(sliderFill, valueLabel, minVal, maxVal, defaultValue, callback)
+    local dragging = false
+    
+    sliderFill.Parent.MouseButton1Down:Connect(function()
+        dragging = true
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging or input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        
+        local slider = sliderFill.Parent
+        local mousePos = input.Position.X
+        local sliderPos = slider.AbsolutePosition.X
+        local sliderSize = slider.AbsoluteSize.X
+        
+        local percent = math.clamp((mousePos - sliderPos) / sliderSize, 0, 1)
+        local value = minVal + (maxVal - minVal) * percent
+        value = math.round(value * 100) / 100
+        
+        sliderFill.Size = UDim2.new(percent, 0, 1, 0)
+        valueLabel.Text = tostring(value)
+        callback(value)
+    end)
+end
+
+setupSlider(speedFill, speedValue, 0.01, 0.5, 0.18, function(val)
+    orbitSpeed = val
+end)
+
+setupSlider(distFill, distValue, 2, 20, 8, function(val)
+    orbitDistance = val
+end)
+
+-- Keyboard shortcuts
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == Enum.KeyCode.F1 then
+        menuVisible = not menuVisible
+        mainFrame.Visible = menuVisible
+    end
+    
+    if input.KeyCode == Enum.KeyCode.F2 then
+        antiAimToggle.MouseButton1Click:Fire()
+    end
+    
+    if input.KeyCode == Enum.KeyCode.F3 then
+        orbitToggle.MouseButton1Click:Fire()
+    end
+end)
+
+-- Update character reference
+localPlayer.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    humanoidRootPart = newCharacter:WaitForChild('HumanoidRootPart')
+    humanoid = newCharacter:WaitForChild('Humanoid')
+end)
+
+-- Print info
+print("Rivals UI Loaded - Press F1 for menu, F2 for Anti-Aim, F3 for Orbit")
