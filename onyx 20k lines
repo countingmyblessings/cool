@@ -1011,14 +1011,58 @@ if not getgenv().InstanceSliderFillBound then
     end)
 end
 
-local eliteSrc = game:HttpGet('https://raw.githubusercontent.com/scripter-sm/EliteZone/refs/heads/main/Dependencies/Library.lua')
+-- ── Wait for game to be ready ──
+if not game:IsLoaded() then game.Loaded:Wait() end
+local _lp = game:GetService("Players").LocalPlayer
+if not _lp then
+    game:GetService("Players").PlayerAdded:Wait()
+    _lp = game:GetService("Players").LocalPlayer
+end
+
+-- ── Library Loader (with full error handling + fallback) ──
+local eliteSrc
+local _libLoadOk, _libLoadErr = pcall(function()
+    eliteSrc = game:HttpGet('https://raw.githubusercontent.com/scripter-sm/EliteZone/refs/heads/main/Dependencies/Library.lua')
+end)
+
+if not _libLoadOk or not eliteSrc or type(eliteSrc) ~= "string" or #eliteSrc < 500 then
+    warn("[ONYX] Primary library URL failed: " .. tostring(_libLoadErr) .. " — trying fallback")
+    local _ok2, _src2 = pcall(function()
+        return game:HttpGet('https://raw.githubusercontent.com/visnoukkk/Onyx/main/Dependencies/Library.lua')
+    end)
+    if _ok2 and _src2 and type(_src2) == "string" and #_src2 > 500 then
+        eliteSrc = _src2
+    else
+        -- Last resort: notify in output and stop
+        error("[ONYX] FATAL: Could not load UI library from any source.\nMake sure HTTP requests are enabled in your executor settings.", 0)
+    end
+end
+
 eliteSrc = eliteSrc:gsub('https://raw.githubusercontent.com/visnoukkk/Onyx/main/uilogo.png', 'rbxassetid://110265513619691')
 eliteSrc = eliteSrc:gsub('Elite Zone', 'Onyx')
-loadstring(eliteSrc)()
+
+local _compiledLib, _compileErr = loadstring(eliteSrc)
+if not _compiledLib then
+    error("[ONYX] Library compile error: " .. tostring(_compileErr), 0)
+end
+
+local _runOk, _runErr = pcall(_compiledLib)
+if not _runOk then
+    warn("[ONYX] Library runtime warning: " .. tostring(_runErr))
+end
+
 local libResult = getgenv().Library
-local Library = libResult.Library
-local ThemeManager = libResult.ThemeManager
-local SaveManager = libResult.SaveManager
+if not libResult then
+    error("[ONYX] getgenv().Library is nil after load — your executor may not support getgenv(). Try a different executor.", 0)
+end
+
+local Library      = (type(libResult) == "table" and libResult.Library) or libResult
+local ThemeManager = (type(libResult) == "table" and libResult.ThemeManager) or nil
+local SaveManager  = (type(libResult) == "table" and libResult.SaveManager) or nil
+
+if not Library or type(Library) ~= "table" then
+    error("[ONYX] Library table is invalid after load. The UI source may have changed.", 0)
+end
 
 getgenv().Library = Library
 getgenv().Toggles = Library.Toggles
